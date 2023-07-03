@@ -10,7 +10,7 @@ const pool = new pq.Pool({
     host: process.env.HOST,
     database: process.env.DATABASE,
     password: process.env.PASSWORD,
-    port: process.env.PORT
+    port: process.env.DATABASE_PORT
 });
 
 const query = (text, params) => pool.query(text, params);
@@ -19,6 +19,8 @@ app.post("/identify", async (req,res)=>{
     const email = req.body.email;
     const phoneNumber = req.body.phoneNumber;
     await modifyContactData(email, phoneNumber);
+    const response = await getResponse(email, phoneNumber);
+    res.status(200).json(response);
 });
 
 async function modifyContactData(email, phoneNumber){
@@ -66,6 +68,48 @@ async function modifyContactData(email, phoneNumber){
     }
 }
 
+async function getResponse(email, phoneNumber){
+    var primaryContactId="";
+    const secondaryContactIdsList = [];
+
+    if(phoneNumber!=null){
+        primaryContactId = await getPrimaryIdUsingPhoneNumber(phoneNumber);
+    }else{
+        primaryContactId = await getPrimaryIdUsingEmail(email);
+    }
+
+    const phoneNumberSet = new Set();
+    const emailSet = new Set();
+
+    var temp = await query('SELECT * FROM "Contact" where id=$1', [primaryContactId]);
+    
+    if(temp.rows[0].phoneNumber!=null)
+        phoneNumberSet.add(temp.rows[0].phoneNumber);
+    if(temp.rows[0].email!=null)
+        emailSet.add(temp.rows[0].email);
+
+    temp = await query('SELECT * FROM "Contact" where "linkedId"=$1', [primaryContactId]);    
+    temp.rows.forEach(element => {
+        if(element.phoneNumber!=null)
+            phoneNumberSet.add(element.phoneNumber);
+        if(element.email!=null)
+            emailSet.add(element.email);
+        secondaryContactIdsList.push(element.id);
+    });
+
+    const phoneNumberList = [...phoneNumberSet];
+    const emailList = [...emailSet];
+
+    return {
+        "contact":{
+            "primartContactId": primaryContactId,
+            "emails": emailList,
+            "phoneNumbers": phoneNumberList,
+            "secondaryContactIds": secondaryContactIdsList
+        }
+    }
+}
+
 async function getPrimaryIdUsingPhoneNumber(phoneNumber){
     const contactWithSamePhoneNumber = await query('SELECT * FROM "Contact" where "phoneNumber"=$1 limit 1', [phoneNumber]);
     return contactWithSamePhoneNumber.rows[0].linkPrecedence == "primary" ?  contactWithSamePhoneNumber.rows[0].id : contactWithSamePhoneNumber.rows[0].linkedId;
@@ -85,3 +129,8 @@ async function checkIfPhoneNumberExist(phoneNumber){
     const result = await query('SELECT * from "Contact" where "phoneNumber"= $1',[phoneNumber]);   
     return result.rows.length>0;
 }
+
+let port= process.env.PORT || 3000;
+app.listen(port,()=>{
+    console.log('Listening at port '+port+'...');
+});
